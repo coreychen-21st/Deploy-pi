@@ -49,7 +49,6 @@ jobs:
       - name: Lint Bicep
         run: |
           az bicep build --file bicep/main.bicep
-          az bicep build --file bicep/vnet.bicep
           az bicep build --file bicep/sql.bicep
           az bicep build --file bicep/redis.bicep
           az bicep build --file bicep/appservice.bicep
