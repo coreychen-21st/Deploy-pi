@@ -1,0 +1,26 @@
+[
+  {
+    "source_subscription": "PI_azure",
+    "source_rg": "clone-test",
+    "source_name": "test-ewa",
+    "targets": [
+      {
+        "target_name": "clone-ewa",
+        "target_rg": "clone-test",
+        "app_service_plan": "clone-ewa-linux"
+      }
+    ]
+  },
+  {
+    "source_subscription": "PI_azure",
+    "source_rg": "clone-test",
+    "source_name": "test-api-earnedwageaccess",
+    "targets": [
+      {
+        "target_name": "clone-api-ewa",
+        "target_rg": "clone-test",
+        "app_service_plan": "clone-api-ewa"
+      }
+    ]
+  }
+]
