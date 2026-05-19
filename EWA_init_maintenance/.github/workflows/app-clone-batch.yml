@@ -1,0 +1,286 @@
+name: App Clone Batch
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      location:
+        description: Fallback location (new RG only)
+        required: true
+        default: Japan West
+        type: choice
+        options:
+          - Japan East
+          - Japan West
+          - East asia
+          - Southeast Asia
+          - taiwannorth
+          - CUSTOM
+      location_custom:
+        description: Azure location custom value
+        required: false
+        type: string
+      dry_run:
+        description: Dry run
+        required: true
+        default: true
+        type: boolean
+      action:
+        description: Action
+        required: true
+        default: clone
+        type: choice
+        options:
+          - clone
+          - delete
+      max_parallel:
+        description: Parallel jobs (1-5)
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+      change_ticket:
+        description: Change ticket (required for prod/delete)
+        required: false
+        type: string
+      confirm:
+        description: Confirm for delete
+        required: false
+        default: false
+        type: boolean
+      batch_spec:
+        description: JSON array for clone mappings
+        required: true
+        type: string
+      clone_to_slot:
+        description: Create preview slot for blue-green deployment
+        required: false
+        default: false
+        type: boolean
+      slot_name:
+        description: Deployment slot name (e.g., preview)
+        required: false
+        default: preview
+        type: string
+      swap_after_clone:
+        description: Swap slot to production after clone (blue-green)
+        required: false
+        default: false
+        type: boolean
+      skip_identity:
+        description: Skip Managed Identity setup
+        required: false
+        default: false
+        type: boolean
+      skip_vnet:
+        description: Skip VNet Integration setup
+        required: false
+        default: false
+        type: boolean
+      clone_appsettings:
+        description: Clone source app settings
+        required: false
+        default: true
+        type: boolean
+      clone_connectionstrings:
+        description: Clone source connection strings
+        required: false
+        default: true
+        type: boolean
+      clone_iprestrictions:
+        description: Clone IP white-list restrictions
+        required: false
+        default: true
+        type: boolean
+      docker_image:
+        description: Docker image override (empty = use source config)
+        required: false
+        type: string
+        default: ''
+      vnet_subnet_id:
+        description: VNet subnet resource ID for integration
+        required: false
+        type: string
+        default: ''
+      vnet_id:
+        description: VNet resource ID
+        required: false
+        type: string
+        default: ''
+      subnet_name:
+        description: Subnet name
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  expand:
+    name: Expand Batch Spec
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.expand.outputs.matrix }}
+      normalized_location: ${{ steps.expand.outputs.normalized_location }}
+    steps:
+      - name: Validate and expand
+        id: expand
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENV_NAME="${{ github.event.inputs.environment }}"
+          ACTION="${{ github.event.inputs.action }}"
+          TICKET="${{ github.event.inputs.change_ticket }}"
+          CONFIRM="${{ github.event.inputs.confirm }}"
+          SPEC='${{ github.event.inputs.batch_spec }}'
+          LOCATION_RAW="${{ github.event.inputs.location }}"
+          LOCATION_CUSTOM="${{ github.event.inputs.location_custom }}"
+
+          resolve_location() {
+            local selected="$1"
+            local custom="$2"
+            local resolved=""
+
+            case "$selected" in
+              ""|"East asia")
+                resolved="eastasia"
+                ;;
+              "Japan East")
+                resolved="japaneast"
+                ;;
+              "Japan West")
+                resolved="japanwest"
+                ;;
+              "Southeast Asia")
+                resolved="southeastasia"
+                ;;
+              "taiwannorth")
+                resolved="taiwannorth"
+                ;;
+              "CUSTOM")
+                if [[ -z "$custom" ]]; then
+                  echo "location 選了 CUSTOM，必須提供 location_custom" >&2
+                  exit 1
+                fi
+                resolved="$custom"
+                ;;
+              *)
+                resolved="$selected"
+                ;;
+            esac
+
+            echo "$resolved"
+          }
+
+          LOCATION_VALUE=$(resolve_location "$LOCATION_RAW" "$LOCATION_CUSTOM")
+
+          if [[ "$ACTION" == "delete" ]]; then
+            [[ "$CONFIRM" == "true" ]] || {
+              echo "delete 必須勾選 confirm=true"
+              exit 1
+            }
+          fi
+
+          echo "$SPEC" | jq -e . >/dev/null
+
+          MATRIX_RAW=$(echo "$SPEC" | jq -c '
+            [ .[] as $src
+              | $src.targets[]
+              | {
+                  source_subscription: $src.source_subscription,
+                  source_rg: $src.source_rg,
+                  source_name: $src.source_name,
+                  target_subscription: (.target_subscription // $src.source_subscription),
+                  target_rg: (.target_rg // $src.source_rg),
+                  target_name: .target_name,
+                  app_service_plan: (.app_service_plan // ""),
+                  docker_image: (.docker_image // ""),
+                  app_runtime: (.app_runtime // "DOTNETCORE:8.0"),
+                  vnet_subnet_id: (.vnet_subnet_id // ""),
+                  vnet_id: (.vnet_id // ""),
+                  subnet_name: (.subnet_name // "")
+                }
+            ]')
+
+          MATRIX=$(echo "$MATRIX_RAW" | jq -c '
+            def normSub:
+              if . == "CA804030" then "c9f80f0b-7d34-4410-a79c-ca23fb550d20"
+              elif . == "CA808046" then "fc6b18ca-199c-4123-8097-834cfc7ac213"
+              elif . == "DataTeam" then "26d35140-67ac-4d20-be0d-fe442ce0a926"
+              elif . == "PI_azure" then "99804447-bee3-4371-9bd5-672a86845c40"
+              else .
+              end;
+            [ .[]
+              | .source_subscription = ((.source_subscription | tostring) | normSub)
+              | .target_subscription = ((.target_subscription | tostring) | normSub)
+            ]')
+
+          COUNT=$(echo "$MATRIX" | jq 'length')
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "batch_spec has no target entries"
+            exit 1
+          fi
+
+          DUPS=$(echo "$MATRIX" | jq -r 'group_by(.target_subscription + "/" + .target_rg + "/" + .target_name) | map(select(length>1)) | length')
+          if [[ "$DUPS" != "0" ]]; then
+            echo "Duplicate targets detected in batch_spec"
+            echo "$MATRIX" | jq -r 'group_by(.target_subscription + "/" + .target_rg + "/" + .target_name) | map(select(length>1)) | .[] | .[0] | (.target_subscription + "/" + .target_rg + "/" + .target_name)'
+            exit 1
+          fi
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "normalized_location=$LOCATION_VALUE" >> "$GITHUB_OUTPUT"
+          echo "Expanded $COUNT clone tasks"
+
+  clone:
+    name: Clone (${{ matrix.source_name }} → ${{ matrix.target_name }}) ${{ github.event.inputs.clone_to_slot == 'true' && format('+slot:{0}', github.event.inputs.slot_name) || '' }}
+    needs: expand
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(github.event.inputs.max_parallel) }}
+      matrix:
+        include: ${{ fromJSON(needs.expand.outputs.matrix) }}
+    uses: ./.github/workflows/app-ops.yml
+    secrets: inherit
+    with:
+      action: ${{ github.event.inputs.action }}
+      environment: ${{ github.event.inputs.environment }}
+      source_subscription: ${{ matrix.source_subscription }}
+      source_rg: ${{ matrix.source_rg }}
+      source_name: ${{ matrix.source_name }}
+      target_subscription: ${{ matrix.target_subscription }}
+      target_rg: ${{ matrix.target_rg }}
+      target_name: ${{ matrix.target_name }}
+      location: ${{ needs.expand.outputs.normalized_location }}
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+      change_ticket: ${{ github.event.inputs.change_ticket }}
+      app_service_plan: ${{ matrix.app_service_plan }}
+      app_runtime: ${{ fromJSON(format('["{0}","{1}"]', github.event.inputs.docker_image != '' && github.event.inputs.docker_image || matrix.app_runtime, matrix.app_runtime))[0] }}
+      docker_image: ${{ fromJSON(format('["{0}","{1}"]', github.event.inputs.docker_image, matrix.docker_image))[0] }}
+      vnet_subnet_id: ${{ fromJSON(format('["{0}","{1}"]', github.event.inputs.vnet_subnet_id, matrix.vnet_subnet_id))[0] }}
+      vnet_id: ${{ fromJSON(format('["{0}","{1}"]', github.event.inputs.vnet_id, matrix.vnet_id))[0] }}
+      subnet_name: ${{ fromJSON(format('["{0}","{1}"]', github.event.inputs.subnet_name, matrix.subnet_name))[0] }}
+      clone_appsettings: ${{ github.event.inputs.clone_appsettings == 'true' }}
+      clone_connectionstrings: ${{ github.event.inputs.clone_connectionstrings == 'true' }}
+      clone_iprestrictions: ${{ github.event.inputs.clone_iprestrictions == 'true' }}
+      skip_identity: ${{ github.event.inputs.skip_identity == 'true' }}
+      skip_vnet: ${{ github.event.inputs.skip_vnet == 'true' }}
+      slot_name: ${{ github.event.inputs.clone_to_slot == 'true' && github.event.inputs.slot_name || '' }}
+      swap_with_production: ${{ github.event.inputs.swap_after_clone == 'true' }}
