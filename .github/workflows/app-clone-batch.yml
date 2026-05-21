@@ -142,6 +142,8 @@ jobs:
       - name: Validate and expand
         id: expand
         shell: bash
+        env:
+          SPEC: ${{ github.event.inputs.batch_spec }}
         run: |
           set -euo pipefail
 
@@ -149,7 +151,6 @@ jobs:
           ACTION="${{ github.event.inputs.action }}"
           TICKET="${{ github.event.inputs.change_ticket }}"
           CONFIRM="${{ github.event.inputs.confirm }}"
-          SPEC='${{ github.event.inputs.batch_spec }}'
           LOCATION_RAW="${{ github.event.inputs.location }}"
           LOCATION_CUSTOM="${{ github.event.inputs.location_custom }}"
 
