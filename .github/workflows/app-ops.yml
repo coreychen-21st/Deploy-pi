@@ -202,6 +202,7 @@ jobs:
           fi
 
       - name: Clone - Create App Service Plan
+        id: create-plan
         if: inputs.action == 'clone' && inputs.dry_run == false
         shell: bash
         run: |
@@ -241,7 +242,7 @@ jobs:
           DOCKER_IMAGE="${{ inputs.docker_image }}"
           RUNTIME="${{ inputs.app_runtime }}"
 
-          PLAN_NAME="$PLAN_NAME"
+          PLAN_NAME="${{ steps.create-plan.outputs.app_service_plan_name }}"
           if [[ -z "$PLAN_NAME" ]]; then
             PLAN_NAME="asp-$TARGET_NAME"
           fi
