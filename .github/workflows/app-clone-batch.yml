@@ -143,7 +143,7 @@ jobs:
         id: expand
         shell: bash
         env:
-          SPEC: ${{ github.event.inputs.batch_spec }}
+          SPEC: ${{ toJSON(fromJSON(github.event.inputs.batch_spec)) }}
         run: |
           set -euo pipefail
 

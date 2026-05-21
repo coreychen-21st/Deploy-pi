@@ -1,7 +1,7 @@
 [
   {
     "source_subscription": "PI_azure",
-    "source_rg": "clone-test",
+    "source_rg": "rg_test",
     "source_name": "test-ewa",
     "targets": [
       {
@@ -13,7 +13,7 @@
   },
   {
     "source_subscription": "PI_azure",
-    "source_rg": "clone-test",
+    "source_rg": "rg_test",
     "source_name": "test-api-earnedwageaccess",
     "targets": [
       {
